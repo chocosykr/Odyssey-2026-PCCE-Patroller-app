@@ -1,38 +1,39 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// prisma/schema.prisma
+// Prisma Schema for Patroller — Police Patrolling Verification System
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql" // Change to "mysql" or "sqlite" depending on your database
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-// =======================
+// ─────────────────────────────────────────────
 // Enums
-// =======================
+// ─────────────────────────────────────────────
 
 enum EventType {
-  STANDARD
-  SPECIAL
-  // Add other event types here
+  NAKA
+  VIP_SECURITY
+  CROWD_CONTROL
+  BANDOBAST
+  PATROL
+  OTHER
 }
 
 enum Shift {
   MORNING
-  EVENING
+  AFTERNOON
   NIGHT
-  // Add other shifts here
 }
 
 enum DutyStatus {
   PENDING
   ACTIVE
   COMPLETED
-  MISSED
-  // Add other statuses here
+  ABSENT
 }
 
 enum Severity {
@@ -40,160 +41,154 @@ enum Severity {
   MEDIUM
   HIGH
   CRITICAL
-  // Add other severities here
 }
 
-// =======================
+// ─────────────────────────────────────────────
 // Models
-// =======================
+// ─────────────────────────────────────────────
 
 model Admin {
-  id        String   @id @default(uuid())
+  id        String   @id @default(cuid())
   name      String
   email     String   @unique
   phone     String
   password  String
   imageURL  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  // Relations
-  station   Station? // 1-to-1 relation with Station
+  stations  Station[]
   events    Event[]
+
+  @@map("admins")
 }
 
 model Station {
-  id        String      @id @default(uuid())
-  name      String
-  location  String
-  code      String
+  id       String @id @default(cuid())
+  name     String
+  location String
+  code     String @unique
+  adminID  String
 
-  // 1-to-1 relation with Admin (Admin - Station)
-  adminID   String      @unique
-  admin     Admin       @relation(fields: [adminID], references: [id])
-
-  // Relations
+  admin      Admin       @relation(fields: [adminID], references: [id])
   patrollers Patroller[]
+
+  @@map("stations")
 }
 
 model Patroller {
-  id           String        @id @default(uuid())
-  name         String
-  email        String        @unique
-  phone        String
-  password     String
-  post         String
-  imageURL     String?
+  id        String  @id @default(cuid())
+  name      String
+  email     String  @unique
+  phone     String
+  password  String
+  stationID String
+  post      String
+  imageURL  String?
 
-  // Many-to-1 relation with Station (Patroller > Station)
-  stationID    String
   station      Station       @relation(fields: [stationID], references: [id])
-
-  // Relations
   assignments  Assigned[]
   deviceTokens DeviceToken[]
-  assignedLogs AssignedLog[] // Inferred relation
+
+  @@map("patrollers")
 }
 
 model Event {
-  id         String    @id @default(uuid())
-  name       String
-  eventType  EventType
-  startDate  DateTime
-  endDate    DateTime
-  location   String
+  id        String    @id @default(cuid())
+  name      String
+  eventType EventType
+  startDate DateTime  @db.Date
+  endDate   DateTime  @db.Date
+  location  String
+  adminID   String
 
-  // Many-to-1 relation with Admin (Event > Admin)
-  adminID    String
-  admin      Admin     @relation(fields: [adminID], references: [id])
+  admin  Admin   @relation(fields: [adminID], references: [id])
+  duties Duty[]
 
-  // Relations
-  duties     Duty[]
+  @@map("events")
 }
 
 model Duty {
-  id         String    @id @default(uuid())
-  name       String
-  shift      Shift
-  zone       String
-  date       DateTime  @db.Date
-  startTime  DateTime  @db.Time
-  endTime    DateTime  @db.Time
-  eventName  String
+  id        String   @id @default(cuid())
+  name      String
+  shift     Shift
+  zone      String
+  date      DateTime @db.Date
+  startTime DateTime @db.Time(0)
+  endTime   DateTime @db.Time(0)
+  eventName String
+  eventID   String
 
-  // Many-to-1 relation with Event (Duty > Event)
-  EventID    String
-  event      Event     @relation(fields: [EventID], references: [id])
-
-  // Relations
+  event       Event      @relation(fields: [eventID], references: [id])
   assignments Assigned[]
-  assignedLogs AssignedLog[] // Inferred relation
+
+  @@map("duties")
 }
 
 model Assigned {
-  id          String      @id @default(uuid())
-  
-  // Many-to-1 relation with Patroller (Assigned < Patroller)
+  id          String @id @default(cuid())
   patrollerID String
-  patroller   Patroller   @relation(fields: [patrollerID], references: [id])
-
-  // Many-to-1 relation with Duty (Assigned < Duty)
   dutyID      String
-  duty        Duty        @relation(fields: [dutyID], references: [id])
 
-  // Relations
+  patroller   Patroller    @relation(fields: [patrollerID], references: [id])
+  duty        Duty         @relation(fields: [dutyID], references: [id])
+  assignedLog AssignedLog?
   incidents   Incident[]
-  telemetries Telemetry[]
+  telemetry   Telemetry[]
 
-  // Optional: Ensures a patroller isn't assigned to the exact same duty twice
   @@unique([patrollerID, dutyID])
+  @@map("assigned")
 }
 
 model AssignedLog {
-  id           String     @id @default(uuid())
+  id           String     @id @default(cuid())
   dutyStatus   DutyStatus
-  faceVerified Boolean
-  checkinTime  DateTime
+  faceVerified Boolean    @default(false)
+  checkinTime  DateTime?  @db.Time(0)
   deletedAt    DateTime?
-
-  // Explicitly linking these to Patroller and Duty models for data integrity
-  patrollerId  String
-  patroller    Patroller  @relation(fields: [patrollerId], references: [id])
-  
+  patrollerID  String
   dutyID       String
-  duty         Duty       @relation(fields: [dutyID], references: [id])
+  assignedID   String     @unique
+
+  assigned Assigned @relation(fields: [assignedID], references: [id])
+
+  @@map("assigned_logs")
 }
 
 model Incident {
-  id          String    @id @default(uuid())
+  id          String   @id @default(cuid())
   name        String
   severity    Severity
-  timeStamp   DateTime  @default(now())
+  timeStamp   DateTime
   imageUrl    String?
   description String
+  assignedID  String
 
-  // Many-to-1 relation with Assigned (Incident > Assigned)
-  AssignedID  String
-  assigned    Assigned  @relation(fields: [AssignedID], references: [id])
+  assigned Assigned @relation(fields: [assignedID], references: [id])
+
+  @@map("incidents")
 }
 
 model Telemetry {
-  id          String    @id @default(uuid())
-  timeStamp   DateTime  @default(now())
-  withinZone  Boolean
-  lat         String
-  lng         String
+  id         String   @id @default(cuid())
+  timeStamp  DateTime @default(now())
+  withinZone Boolean
+  lat        String
+  lng        String
+  assignedID String
 
-  // Many-to-1 relation with Assigned 
-  // (Assuming Many-to-1 because a patroller can enter/exit multiple times)
-  AssignedID  String
-  assigned    Assigned  @relation(fields: [AssignedID], references: [id])
+  assigned Assigned @relation(fields: [assignedID], references: [id])
+
+  @@map("telemetry")
 }
 
 model DeviceToken {
-  id          String    @id @default(uuid())
-  token       String
-  createdAt   DateTime  @default(now())
-
-  // Many-to-1 relation with Patroller (DeviceToken > Patroller)
+  id          String   @id @default(cuid())
+  token       String   @unique
+  createdAt   DateTime @default(now())
   patrollerID String
-  patroller   Patroller @relation(fields: [patrollerID], references: [id])
+
+  patroller Patroller @relation(fields: [patrollerID], references: [id])
+
+  @@map("device_tokens")
 }
