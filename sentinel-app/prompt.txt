@@ -1,0 +1,318 @@
+Building the mobile app in React Native is a great choice. For a hackathon, speed and reliability are everything. I highly recommend using Expo instead of the raw React Native CLI. Expo abstracts away the messy native iOS/Android configurations so you can focus purely on building the "Sentinel" features: the camera, location tracking, and API calls.
+Here is your comprehensive, step-by-step guide to building the basic version of the Sentinel app.
+Phase 1: Setup and Initialization
+First, let's bootstrap a clean, modern React Native project using TypeScript and Expo Router (for easy navigation).
+1. Create the project:
+Open your terminal and run:
+Bash
+
+npx create-expo-app@latest sentinel-app --template tabscd sentinel-app
+(The tabs template gives you a nice starting point with navigation already set up).
+2. Install Core Dependencies:
+You need specific libraries to handle the core features of Night Vigil and E-Bandobast: Camera, Location, and distance calculations.
+Bash
+
+npx expo install expo-camera expo-location expo-media-library
+npm install axios geolib
+expo-camera: For the check-in selfie.
+expo-location: For GPS coordinates and background tracking.
+geolib: A lightweight library to calculate the distance between two coordinates directly on the phone (great for UI feedback before hitting the server).
+Phase 2: Configuring Permissions
+Mobile OSs are strict about location and camera access. You need to declare these intents.
+Open your app.json at the root of your project and add the plugins array to configure native permissions:
+JSON
+
+{
+  "expo": {
+    "name": "Sentinel",
+    "slug": "sentinel-app",
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Sentinel to take photos for duty verification."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Sentinel to track your location to verify Naka duty and monitor deviations."
+        }
+      ]
+    ]
+  }
+}
+Phase 3: Building the Core App Structure
+In an Expo Router app, your file structure dictates your navigation. Inside the app folder, you'll want to structure it roughly like this:
+app/
+index.tsx (Login / Enter Phone Number)
+(tabs)/
+dashboard.tsx (Shows current assigned duty)
+check-in.tsx (The Camera & Location screen)
+Phase 4: Implementing the "Check-In" Screen (The Core Feature)
+This is the most critical part of the app. The officer opens this screen, the app grabs their location, opens the camera, and lets them snap a photo to verify their duty.
+Here is a robust starting point for app/(tabs)/check-in.tsx:
+TypeScript
+
+import React, { useState, useEffect, useRef } from 'react';
+import { StyleSheet, Text, View, Button, Image, Alert } from 'react-native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as Location from 'expo-location';
+import { getDistance } from 'geolib';
+
+export default function CheckInScreen() {
+  const [permission, requestPermission] = useCameraPermissions();
+  const [location, setLocation] = useState<Location.LocationObject | null>(null);
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const cameraRef = useRef<CameraView>(null);
+
+  // Mock Duty Location (e.g., Margao Police Station Naka)
+  const ASSIGNED_NAKA = { latitude: 15.2832, longitude: 73.9631 }; 
+  const ALLOWED_RADIUS_METERS = 50;
+
+  useEffect(() => {
+    (async () => {
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission to access location was denied');
+        return;
+      }
+      let loc = await Location.getCurrentPositionAsync({});
+      setLocation(loc);
+    })();
+  }, []);
+
+  if (!permission) return <View />; // Loading
+  if (!permission.granted) {
+    return (
+      <View style={styles.container}>
+        <Text>We need your permission to show the camera</Text>
+        <Button onPress={requestPermission} title="grant permission" />
+      </View>
+    );
+  }
+
+  const handleCheckIn = async () => {
+    if (!cameraRef.current || !location) return;
+
+    // 1. Check Geofence locally first for quick UI feedback
+    const distance = getDistance(
+      { latitude: location.coords.latitude, longitude: location.coords.longitude },
+      ASSIGNED_NAKA
+    );
+
+    if (distance > ALLOWED_RADIUS_METERS) {
+      Alert.alert("Geofence Error", `You are ${distance}m away. You must be within ${ALLOWED_RADIUS_METERS}m of the Naka.`);
+      return;
+    }
+
+    // 2. Take the Selfie
+    const photo = await cameraRef.current.takePictureAsync({ base64: true });
+    setPhotoUri(photo.uri);
+
+    // 3. Prepare Payload for Next.js Backend
+    const payload = {
+      timestamp: new Date().toISOString(),
+      location: {
+        lat: location.coords.latitude,
+        lng: location.coords.longitude,
+      },
+      image: photo.base64, // Send base64 to backend, or upload to S3/Supabase storage and send URL
+    };
+
+    console.log("Sending to backend...", payload);
+    Alert.alert("Success", "Duty Verified and Logged.");
+  };
+
+  return (
+    <View style={styles.container}>
+      {!photoUri ? (
+        <>
+          <CameraView style={styles.camera} facing="front" ref={cameraRef} />
+          <View style={styles.buttonContainer}>
+            <Button title="Verify Location & Snap Selfie" onPress={handleCheckIn} />
+          </View>
+        </>
+      ) : (
+        <>
+          <Image source={{ uri: photoUri }} style={styles.camera} />
+          <Button title="Retake" onPress={() => setPhotoUri(null)} />
+        </>
+      )}
+      {location && (
+        <Text style={styles.text}>
+          Lat: {location.coords.latitude.toFixed(4)}, Lng: {location.coords.longitude.toFixed(4)}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, justifyContent: 'center' },
+  camera: { flex: 0.8, width: '100%' },
+  buttonContainer: { padding: 20 },
+  text: { textAlign: 'center', marginTop: 10 }
+});
+Phase 5: Connecting to your Next.js Dashboard
+Once the app captures the data, you need to send it to your Next.js API route.
+Storage Strategy: Do not send heavy base64 strings directly to PostgreSQL. Upload the image to a storage bucket (like Supabase Storage or AWS S3), get the public URL, and save that URL along with the GPS coordinates to your database.
+API Call: Use axios in your React Native app to POST the data to https://your-nextjs-domain.com/api/check-in.
+Running the App
+To test this on your actual physical phone (which you must do to test the camera and GPS):
+Download the Expo Go app on your iOS or Android device.
+Run npx expo start in your terminal.
+Scan the QR code that appears in your terminal with your phone's camera.
+This will give you a fully functional prototype capable of proving the facial recognition and geofencing concepts to hackathon judges.
+To help me tailor the next step, how are you planning to handle the image uploads and facial recognition on the Next.js backend—are you leaning towards an existing service like AWS Rekognition, or are you hoping to integrate a simpler API?
+
+
+Above is what's already done 
+Below is approx what needs to be done.
+
+I want to build a React Native app called Patroller — a police 
+patrolling verification and deployment tracking system.
+
+This is a learning project. I am a third year IT student 
+comfortable with React, Next.js, TypeScript, Node.js, 
+Express, PostgreSQL, and Prisma.
+
+---
+
+WHAT THE APP DOES:
+
+One app, two roles — Officer and Admin. Role is selected 
+on the home screen, no auth for now.
+
+Officer side:
+- Enter name and check in
+- Selfie captured and verified using face recognition
+- GPS location validated against a geofenced duty zone
+- Continuously sends live location to the server every 
+  few seconds
+- Shows real-time status: inside or outside zone, 
+  distance from zone
+- End duty button to stop tracking
+
+Admin side:
+- Live map showing all officer positions as markers
+- Duty zone polygon drawn on the map
+- Markers are green if inside zone, red if outside
+- Deviation alert banner if any officer is outside zone
+- Officer list below map showing name, status, and 
+  last updated time
+- Polls server every 5 seconds for updates
+
+---
+
+BACKEND:
+
+- Node.js + Express
+- PostgreSQL + PostGIS for spatial queries
+- Geofencing logic:
+    ST_Within() — check if officer is inside zone
+    ST_Distance() — calculate distance from zone in metres
+    ST_DWithin() — deviation detection
+- Three API routes:
+    POST /api/checkin — insert officer, validate zone
+    POST /api/location — update live location, 
+                         check deviation
+    GET /api/officers — return all officer positions 
+                        with lat, lng, is_inside, 
+                        updated_at
+- PostgreSQL runs in Docker using the postgis/postgis image
+- Database name: patroller
+- Two tables:
+    duty_zones: id, name, zone GEOMETRY(Polygon, 4326)
+    officer_locations: id, officer_name UNIQUE, 
+                       location GEOMETRY(Point, 4326), 
+                       is_inside BOOLEAN, 
+                       updated_at TIMESTAMPTZ
+- One test zone already inserted called 'Naka Point A' 
+  with coordinates around 73.850-73.860 lng, 
+  15.490-15.500 lat (Goa, India)
+
+---
+
+REACT NATIVE STACK:
+
+- React Native with Expo
+- TypeScript
+- expo-location for GPS
+- expo-camera for selfie capture
+- react-native-maps or maplibre for the map
+- face-api.js or a suitable React Native face recognition 
+  library for face verification
+- Axios or fetch for API calls
+- NativeWind or StyleSheet for styling
+- Real device testing via Expo Go on Android
+
+---
+
+STEPS TO BUILD IN ORDER:
+
+STEP 1 — Project setup
+- Init Expo project with TypeScript
+- Install all dependencies
+- Set up folder structure:
+    app/ or screens/ for pages
+    components/ for reusable components
+    lib/ for API calls and utilities
+
+STEP 2 — Backend setup
+- Set up Express server
+- Connect to PostgreSQL + PostGIS via Docker
+- Create the three API routes
+- Test all routes with curl before touching 
+  the React Native app
+
+STEP 3 — Navigation
+- Set up stack navigation
+- Home screen with two buttons: Officer and Admin
+- Navigate to OfficerScreen and AdminScreen
+
+STEP 4 — Officer screen
+- Name input
+- Check in button
+- Capture GPS using expo-location
+- POST to /api/checkin
+- After check in, start watchPositionAsync
+- POST to /api/location every 5 seconds
+- Show inside/outside status and distance
+- End duty button
+
+STEP 5 — Face recognition
+- On check in, open camera for selfie
+- Verify face before allowing GPS check in
+- Use appropriate React Native compatible library
+
+STEP 6 — Admin screen
+- Map component with duty zone polygon
+- Fetch /api/officers every 5 seconds
+- Plot officer markers on map
+- Color code green/red based on is_inside
+- Deviation alert if any officer is outside
+- Officer list below map
+
+STEP 7 — Test on real device
+- Run Express backend
+- Run Expo on Android device
+- Officer checks in on phone
+- Admin map updates live on another device 
+  or emulator
+
+---
+
+IMPORTANT NOTES:
+
+- I am in Goa, India. My phone uses mobile hotspot.
+  Backend runs on my laptop. Use ngrok to expose 
+  the Express server so the phone can reach it.
+- GPS must use high accuracy mode.
+- The app should feel clean and minimal. Dark theme 
+  preferred — navy background #0A1628, blue accent 
+  #1B4FD8, white text.
+- Complete one step at a time and wait for me to 
+  confirm before moving to the next step.
+- Do not skip steps or combine them.
+- If something doesn't work, debug it before moving on.
