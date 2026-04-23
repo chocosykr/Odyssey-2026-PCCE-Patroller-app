@@ -4,10 +4,27 @@
 // Get a free hosted Postgres database in seconds: `npx create-db`
 
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+model DutyZone {
+  id    Int                                  @id @default(autoincrement())
+  name  String
+  zone  Unsupported("geometry(Polygon, 4326)")
+
+  @@index([zone], name: "zone_idx", type: Gist)
+}
+
+model OfficerLocation {
+  id           Int                                @id @default(autoincrement())
+  officer_name String                             @unique
+  location     Unsupported("geometry(Point, 4326)")
+  is_inside    Boolean                            @default(true)
+  updated_at   DateTime                           @default(now())
+
+  @@index([location], name: "location_idx", type: Gist)
 }
